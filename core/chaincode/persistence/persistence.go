@@ -7,8 +7,10 @@ SPDX-License-Identifier: Apache-2.0
 package persistence
 
 import (
+	"bytes"
 	"encoding/hex"
 	"fmt"
+	"github.com/hyperledger/fabric/core/container/externalbuilder"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -143,9 +145,14 @@ func (s *Store) Initialize() {
 
 // Save persists chaincode install package bytes. It returns
 // the hash of the chaincode install package
-func (s *Store) Save(label string, ccInstallPkg []byte) (string, error) {
-	hash := util.ComputeSHA256(ccInstallPkg)
-	packageID := packageID(label, hash)
+func (s *Store) Save(ccPkg *ChaincodePackage, ccInstallPkg []byte) (string, error) {
+	hash, err := computePackageId(ccPkg, ccInstallPkg)
+	if err != nil {
+		err = errors.Wrapf(err, "error computing chaincode package id")
+		logger.Error(err.Error())
+		return "", err
+	}
+	packageID := packageID(ccPkg.Metadata.Label, hash)
 
 	ccInstallPkgFileName := CCFileName(packageID)
 	ccInstallPkgFilePath := filepath.Join(s.Path, ccInstallPkgFileName)
@@ -254,4 +261,51 @@ func installedChaincodeFromFilename(fileName string) (chaincode.InstalledChainco
 	}
 
 	return chaincode.InstalledChaincode{}, false
+}
+
+func computePackageId(ccPkg *ChaincodePackage, ccInstallPkg []byte) ([]byte, error) {
+	// More elegant solution is to add an entry in the protos about
+	// external as a reserved keyword.
+	ccType := strings.ToUpper(ccPkg.Metadata.Type)
+	const ccServerIdentifier = "EXTERNAL"
+	if ccType == ccServerIdentifier {
+		// Remove peer's TLS client cert information from the package.
+		// Expect a `connection.json` file in the package and escape the
+		// key/cert information from it.
+		var err error
+		if ccInstallPkg, err = requiredFromCCServer(ccInstallPkg); err != nil {
+			return nil, err
+		}
+	}
+
+	hash := util.ComputeSHA256(ccInstallPkg)
+	return hash, nil
+}
+
+// requiredFromCCServer is called only for external chaincode.
+// More elegant solution would be to introduce another script in build packs.
+// Through build pack script something like "prepare", one can specify the
+// package contents on which chaincode package id can be calculated. The
+// contents of this package will be unique across organization.
+func requiredFromCCServer(ccInstallPkg []byte) ([]byte, error) {
+	// Get a temp directory to unzip
+	hash := util.ComputeSHA256(ccInstallPkg)
+	packagePath, err := ioutil.TempDir("", "fabric-build"+externalbuilder.SanitizeCCIDPath(string(hash)))
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			_ := os.RemoveAll(packagePath)
+		}
+	}()
+	ccPkgReader := bytes.NewReader(ccInstallPkg)
+	if err = externalbuilder.Untar(ccPkgReader, packagePath); err != nil {
+		return nil, err
+	}
+	// Extract the connection.json file from the code package
+	// Expect code.tar.gz file in the untar location.
+	// Assumes that chaincode.json is supplied with key and cert.
+	ioutil.ReadFile()
+	externalbuilder.Untar()
 }

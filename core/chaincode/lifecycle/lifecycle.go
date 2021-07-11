@@ -201,7 +201,7 @@ type ChaincodeBuilder interface {
 
 // ChaincodeStore provides a way to persist chaincodes
 type ChaincodeStore interface {
-	Save(label string, ccInstallPkg []byte) (string, error)
+	Save(ccPkg *persistence.ChaincodePackage, ccInstallPkg []byte) (string, error)
 	ListInstalledChaincodes() ([]chaincode.InstalledChaincode, error)
 	Load(packageID string) (ccInstallPkg []byte, err error)
 	Delete(packageID string) error
@@ -670,7 +670,12 @@ func (ef *ExternalFunctions) InstallChaincode(chaincodeInstallPackage []byte) (*
 		return nil, errors.New("empty metadata for supplied chaincode")
 	}
 
-	packageID, err := ef.Resources.ChaincodeStore.Save(pkg.Metadata.Label, chaincodeInstallPackage)
+	// Calculate the package id intelligently by ignoring peer endpoint
+	// cert and key information. This is because by embedding a TLS level
+	// credentials in the package would make each peer have its own hash
+	// generated. However the hash/package id has to be approved once per
+	// organization.
+	packageID, err := ef.Resources.ChaincodeStore.Save(pkg, chaincodeInstallPackage)
 	if err != nil {
 		return nil, errors.WithMessage(err, "could not save cc install package")
 	}
